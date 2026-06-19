@@ -1,8 +1,9 @@
-use chrono::{Local, NaiveDate};
+use chrono::NaiveDate;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 
-use crate::storage::{Category, Task, load_tasks, save_tasks};
+use crate::config::CustomCategoryConfig;
+use crate::storage::{Category, Task, find_active_date, load_tasks, save_tasks};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -12,6 +13,7 @@ pub enum Screen {
     ConfirmSend,
     Settings,
     WhatsappSetup,
+    AddCustomCategory,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +33,7 @@ pub const S_SEND_TIME:     usize = 6;
 pub const SETTINGS_COUNT:  usize = 7;
 pub const DISCORD_TOGGLE_IDX: usize = SETTINGS_COUNT;     // 7
 pub const TOGGLE_IDX:         usize = SETTINGS_COUNT + 1; // 8 (WhatsApp)
+pub const CUSTOM_CAT_ADD_IDX: usize = SETTINGS_COUNT + 2; // 9 ("+Adicionar Coluna")
 
 // ── WhatsApp setup state ─────────────────────────────────────────────────────
 
@@ -51,9 +54,9 @@ pub enum WppPhase {
 
 pub struct WppState {
     pub phase: WppPhase,
-    pub qr_rendered: Option<String>, // unicode-art QR code ready to display
+    pub qr_rendered: Option<String>,
     pub phone_input: String,
-    pub log: String, // one-line status shown to the user
+    pub log: String,
 }
 
 impl Default for WppState {
@@ -92,11 +95,17 @@ pub struct App {
 
     pub status_message: Option<String>,
     pub should_quit: bool,
+
+    // custom category management
+    pub custom_categories: Vec<CustomCategoryConfig>,
+    pub custom_cat_step: usize,   // 0 = name, 1 = icon
+    pub custom_cat_name: String,
+    pub custom_cat_icon: String,
 }
 
 impl App {
     pub fn new() -> anyhow::Result<Self> {
-        let date = Local::now().date_naive();
+        let date = find_active_date();
         let tasks = load_tasks(date)?;
         let config = crate::config::load_config()?;
 
@@ -127,7 +136,24 @@ impl App {
             wpp_cancel: Arc::new(AtomicBool::new(false)),
             status_message: None,
             should_quit: false,
+            custom_categories: config.custom_categories,
+            custom_cat_step: 0,
+            custom_cat_name: String::new(),
+            custom_cat_icon: String::new(),
         })
+    }
+
+    /// Returns all categories: 4 built-in + user-defined custom ones.
+    pub fn all_categories(&self) -> Vec<Category> {
+        let mut cats: Vec<Category> = Category::all().to_vec();
+        for cc in &self.custom_categories {
+            cats.push(Category::Custom {
+                key: cc.key.clone(),
+                name: cc.name.clone(),
+                icon: cc.icon.clone(),
+            });
+        }
+        cats
     }
 
     pub fn tasks_for_category(&self, cat: &Category) -> Vec<&Task> {
@@ -135,11 +161,11 @@ impl App {
     }
 
     pub fn selected_category_enum(&self) -> Category {
-        Category::all()[self.selected_category].clone()
+        self.all_categories()[self.selected_category].clone()
     }
 
     pub fn add_task(&mut self) {
-        let cat = Category::all()[self.add_category].clone();
+        let cat = self.all_categories()[self.add_category].clone();
         let desc = self.add_input.trim().to_string();
         if !desc.is_empty() {
             self.tasks.push(Task::new(cat, desc));
@@ -178,6 +204,13 @@ impl App {
         }
     }
 
+    pub fn clamp_selected_category(&mut self) {
+        let n = self.all_categories().len();
+        if self.selected_category >= n {
+            self.selected_category = n.saturating_sub(1);
+        }
+    }
+
     pub fn save_settings(&mut self) -> anyhow::Result<()> {
         let mut config = crate::config::load_config()?;
         config.discord.enabled            = self.discord_enabled;
@@ -189,9 +222,36 @@ impl App {
         config.whatsapp.tech_lead_phone   = self.settings_inputs[S_WPP_PHONE].clone();
         config.whatsapp.enabled           = self.wpp_enabled;
         config.schedule.send_time         = self.settings_inputs[S_SEND_TIME].clone();
+        config.custom_categories          = self.custom_categories.clone();
         crate::config::save_config(&config)?;
         self.set_status("Configurações salvas!");
         Ok(())
+    }
+
+    pub fn add_custom_category(&mut self) {
+        let name = self.custom_cat_name.trim().to_string();
+        let icon = self.custom_cat_icon.trim().to_string();
+        if name.is_empty() { return; }
+        let icon = if icon.is_empty() { "📌".to_string() } else { icon };
+        // key = slugified name
+        let key = name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+            .collect::<String>();
+        self.custom_categories.push(CustomCategoryConfig { key, name, icon });
+        let _ = self.save_settings();
+        self.custom_cat_name.clear();
+        self.custom_cat_icon.clear();
+        self.custom_cat_step = 0;
+    }
+
+    pub fn delete_custom_category(&mut self, idx: usize) {
+        if idx < self.custom_categories.len() {
+            self.custom_categories.remove(idx);
+            let _ = self.save_settings();
+            self.clamp_selected_category();
+        }
     }
 
     pub fn set_status(&mut self, msg: &str) {

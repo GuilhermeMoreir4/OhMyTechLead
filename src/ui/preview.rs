@@ -15,7 +15,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .constraints([Constraint::Min(0), Constraint::Length(3)])
         .split(area);
 
-    let report = generate_report(app.date, &app.tasks);
+    let report = generate_report(app.date, &app.tasks, &app.all_categories());
 
     let block = Block::default()
         .title(" Preview do Relatório ")

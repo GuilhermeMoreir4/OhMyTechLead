@@ -32,14 +32,14 @@ pub fn format_date(date: NaiveDate) -> String {
     )
 }
 
-pub fn generate_report(date: NaiveDate, tasks: &[Task]) -> String {
+pub fn generate_report(date: NaiveDate, tasks: &[Task], categories: &[Category]) -> String {
     let mut lines = vec![
         format!("📊 **Relatório do dia — {}**", format_date(date)),
         String::new(),
     ];
 
-    for category in Category::all() {
-        let cat_tasks: Vec<&Task> = tasks.iter().filter(|t| t.category == category).collect();
+    for category in categories {
+        let cat_tasks: Vec<&Task> = tasks.iter().filter(|t| &t.category == category).collect();
         lines.push(format!("{} **{}:**", category.icon(), category.label()));
         if cat_tasks.is_empty() {
             lines.push("(nenhum)".to_string());

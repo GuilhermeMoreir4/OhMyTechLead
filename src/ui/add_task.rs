@@ -7,11 +7,13 @@ use ratatui::{
 };
 
 use crate::app::{AddTaskStep, App};
-use crate::storage::Category;
 use crate::ui::centered_rect;
 
 pub fn render(f: &mut Frame, app: &App) {
-    let area = centered_rect(60, 60, f.area());
+    let categories = app.all_categories();
+    let cat_height = (categories.len() as u16) + 2; // +2 for borders
+
+    let area = centered_rect(60, 70, f.area());
     f.render_widget(Clear, area);
 
     let block = Block::default()
@@ -22,13 +24,16 @@ pub fn render(f: &mut Frame, app: &App) {
     let inner = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
-        .constraints([Constraint::Length(8), Constraint::Length(3), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(cat_height),
+            Constraint::Length(3),
+            Constraint::Min(0),
+        ])
         .split(block.inner(area));
 
     f.render_widget(block, area);
 
     // Category selector
-    let categories = Category::all();
     let items: Vec<ListItem> = categories
         .iter()
         .enumerate()
@@ -66,11 +71,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Style::default().fg(Color::DarkGray)
     };
 
-    let cursor = if app.add_step == AddTaskStep::EnterDescription {
-        "█"
-    } else {
-        ""
-    };
+    let cursor = if app.add_step == AddTaskStep::EnterDescription { "█" } else { "" };
 
     let desc_block = Block::default()
         .title(" Descrição ")
@@ -84,6 +85,7 @@ pub fn render(f: &mut Frame, app: &App) {
         AddTaskStep::SelectCategory => "[↑/↓] Selecionar  [Enter] Confirmar  [Esc] Cancelar",
         AddTaskStep::EnterDescription => "[Enter] Salvar  [Esc] Voltar",
     };
-    let hint_widget = Paragraph::new(hint).style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC));
+    let hint_widget = Paragraph::new(hint)
+        .style(Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC));
     f.render_widget(hint_widget, inner[2]);
 }

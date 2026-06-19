@@ -24,7 +24,49 @@ pub fn render(f: &mut Frame, app: &App) {
             dashboard::render(f, app);
             whatsapp_setup::render(f, app);
         }
+        Screen::AddCustomCategory => {
+            settings::render(f, app);
+            render_add_custom_category(f, app);
+        }
     }
+}
+
+fn render_add_custom_category(f: &mut Frame, app: &App) {
+    use ratatui::{
+        style::{Color, Style},
+        widgets::{Block, Borders, Clear, Paragraph},
+    };
+    let area = centered_rect(50, 30, f.area());
+    f.render_widget(Clear, area);
+
+    let (title, value, hint) = if app.custom_cat_step == 0 {
+        (" Nova Coluna — Nome ", &app.custom_cat_name, "[Enter] Próximo  [Esc] Cancelar")
+    } else {
+        (" Nova Coluna — Emoji ", &app.custom_cat_icon, "[Enter] Confirmar  [Esc] Voltar")
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    use ratatui::layout::{Constraint, Direction, Layout};
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+
+    f.render_widget(
+        Paragraph::new(format!("{}█", value)).style(Style::default().fg(Color::White)),
+        chunks[0],
+    );
+    f.render_widget(
+        Paragraph::new(hint).style(Style::default().fg(Color::DarkGray)),
+        chunks[1],
+    );
 }
 
 fn render_confirm(f: &mut Frame) {

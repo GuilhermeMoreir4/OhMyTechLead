@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::{
-    App, SETTINGS_COUNT, DISCORD_TOGGLE_IDX, TOGGLE_IDX,
+    App, CUSTOM_CAT_ADD_IDX, DISCORD_TOGGLE_IDX, SETTINGS_COUNT, TOGGLE_IDX,
     S_DISCORD_TOKEN, S_DISCORD_USER,
     S_WPP_URL, S_WPP_KEY, S_WPP_INSTANCE, S_WPP_PHONE,
 };
@@ -20,30 +20,34 @@ struct FieldMeta {
 const FIELDS: [FieldMeta; SETTINGS_COUNT] = [
     FieldMeta { label: "Discord — Bot Token",         masked: true  },
     FieldMeta { label: "Discord — User ID Tech Lead", masked: false },
-    FieldMeta { label: "WhatsApp — URL (waha)",        masked: false },
+    FieldMeta { label: "WhatsApp — URL (waha)",       masked: false },
     FieldMeta { label: "WhatsApp — API Key",          masked: true  },
     FieldMeta { label: "WhatsApp — Sessão",           masked: false },
     FieldMeta { label: "WhatsApp — Telefone (5511…)", masked: false },
     FieldMeta { label: "Horário de Envio (HH:MM)",    masked: false },
 ];
 
-// Visual layout (rows after header):
-//  0  Discord Token       (field 0)
-//  1  Discord User ID     (field 1)
-//  2  Discord toggle      (DISCORD_TOGGLE_IDX)
-//  3  WhatsApp toggle     (TOGGLE_IDX)
-//  4  WPP URL             (field 2)
-//  5  WPP Key             (field 3)
-//  6  WPP Sessão          (field 4)
-//  7  WPP Telefone        (field 5)
-//  8  Horário             (field 6)
-const VISUAL_ROWS: usize = SETTINGS_COUNT + 2; // +2 for the two toggles
+// Visual layout:
+//  0   Discord Token
+//  1   Discord User ID
+//  2   Discord toggle
+//  3   WhatsApp toggle
+//  4   WPP URL
+//  5   WPP Key
+//  6   WPP Sessão
+//  7   WPP Telefone
+//  8   Horário
+//  9   "+ Adicionar Coluna"  (CUSTOM_CAT_ADD_IDX)
+//  10+ existing custom categories
 
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
+    let custom_count = app.custom_categories.len();
+    // 9 base rows + 1 "add" button + N custom categories
+    let visual_rows = SETTINGS_COUNT + 2 + 1 + custom_count;
 
     let mut constraints = vec![Constraint::Length(3)]; // header
-    for _ in 0..VISUAL_ROWS {
+    for _ in 0..visual_rows {
         constraints.push(Constraint::Length(3));
     }
     constraints.push(Constraint::Min(0));
@@ -54,37 +58,73 @@ pub fn render(f: &mut Frame, app: &App) {
         .constraints(constraints)
         .split(area);
 
-    let header = Paragraph::new(" Configurações  [↑/↓] Navegar  [Enter] Editar  [Space] Toggle  [Ctrl+S] Salvar  [Esc] Voltar")
-        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-        .block(Block::default().borders(Borders::BOTTOM));
+    let header = Paragraph::new(
+        " Configurações  [↑/↓] Navegar  [Enter] Editar  [Space] Toggle  [Ctrl+S] Salvar  [Esc] Voltar",
+    )
+    .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+    .block(Block::default().borders(Borders::BOTTOM));
     f.render_widget(header, chunks[0]);
 
-    for visual_row in 0..VISUAL_ROWS {
+    for visual_row in 0..visual_rows {
         let chunk = chunks[visual_row + 1];
 
-        // Discord toggle at visual row 2
+        // Discord toggle
         if visual_row == 2 {
-            render_toggle(
-                f, chunk,
-                "Discord — Ativado",
-                app.discord_enabled,
-                app.settings_field == DISCORD_TOGGLE_IDX,
-            );
+            render_toggle(f, chunk, "Discord — Ativado", app.discord_enabled, app.settings_field == DISCORD_TOGGLE_IDX);
             continue;
         }
 
-        // WhatsApp toggle at visual row 3
+        // WhatsApp toggle
         if visual_row == 3 {
-            render_toggle(
-                f, chunk,
-                "WhatsApp — Ativado",
-                app.wpp_enabled,
-                app.settings_field == TOGGLE_IDX,
+            render_toggle(f, chunk, "WhatsApp — Ativado", app.wpp_enabled, app.settings_field == TOGGLE_IDX);
+            continue;
+        }
+
+        // "+ Adicionar Coluna" button
+        if visual_row == CUSTOM_CAT_ADD_IDX {
+            let is_focused = app.settings_field == CUSTOM_CAT_ADD_IDX;
+            let border_style = if is_focused {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            let block = Block::default()
+                .title(" ── Colunas Extras ── ")
+                .borders(Borders::ALL)
+                .border_style(border_style);
+            let hint = if is_focused { "[Enter] Adicionar nova coluna" } else { "+ Adicionar Coluna" };
+            f.render_widget(
+                Paragraph::new(hint).style(Style::default().fg(Color::Green)).block(block),
+                chunk,
             );
             continue;
         }
 
-        // map visual_row → field index (skip the two toggle rows at 2 and 3)
+        // Existing custom categories
+        if visual_row > CUSTOM_CAT_ADD_IDX {
+            let cat_idx = visual_row - CUSTOM_CAT_ADD_IDX - 1;
+            if cat_idx < custom_count {
+                let cc = &app.custom_categories[cat_idx];
+                let field_idx = CUSTOM_CAT_ADD_IDX + 1 + cat_idx;
+                let is_focused = app.settings_field == field_idx;
+                let border_style = if is_focused {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                let block = Block::default()
+                    .title(format!(" Coluna Extra #{} ", cat_idx + 1))
+                    .borders(Borders::ALL)
+                    .border_style(border_style);
+                let label = format!("{} {}  {}", cc.icon, cc.name, if is_focused { "  [D] Remover" } else { "" });
+                f.render_widget(Paragraph::new(label).block(block), chunk);
+            }
+            continue;
+        }
+
+        // Normal text fields — map visual_row to field index
+        // visual_row < 2 → field_idx = visual_row
+        // visual_row in 4..8 → field_idx = visual_row - 2
         let field_idx = if visual_row < 2 { visual_row } else { visual_row - 2 };
         let meta = &FIELDS[field_idx];
 

@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Datelike, Local, NaiveDate, Weekday};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -12,6 +13,7 @@ pub enum Category {
     Done,
     VoltouDeReview,
     Obstacle,
+    Custom { key: String, name: String, icon: String },
 }
 
 impl Category {
@@ -21,6 +23,7 @@ impl Category {
             Category::Done => "Fiz",
             Category::VoltouDeReview => "Voltou de Review",
             Category::Obstacle => "Obstáculo",
+            Category::Custom { name, .. } => name.as_str(),
         }
     }
 
@@ -30,6 +33,7 @@ impl Category {
             Category::Done => "✅",
             Category::VoltouDeReview => "🔄",
             Category::Obstacle => "🚧",
+            Category::Custom { icon, .. } => icon.as_str(),
         }
     }
 
@@ -98,23 +102,54 @@ pub fn sent_log_path() -> Result<PathBuf> {
     Ok(path.join("sent.log"))
 }
 
-pub fn already_sent_today() -> bool {
-    let Ok(path) = sent_log_path() else {
-        return false;
-    };
-    if !path.exists() {
-        return false;
-    }
-    let Ok(content) = fs::read_to_string(&path) else {
-        return false;
-    };
-    let today = Local::now().date_naive().to_string();
-    content.trim() == today
+/// Returns true if `date` appears in sent.log (supports both old single-line and new multi-line format).
+pub fn already_sent_for(date: NaiveDate) -> bool {
+    let Ok(path) = sent_log_path() else { return false; };
+    if !path.exists() { return false; }
+    let Ok(content) = fs::read_to_string(&path) else { return false; };
+    let date_str = date.to_string();
+    content.lines().any(|line| line.trim() == date_str)
 }
 
-pub fn mark_sent_today() -> Result<()> {
+/// Appends `date` to sent.log (one date per line).
+pub fn mark_sent_for(date: NaiveDate) -> Result<()> {
     let path = sent_log_path()?;
-    let today = Local::now().date_naive().to_string();
-    fs::write(path, today)?;
+    let mut file = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(file, "{}", date)?;
     Ok(())
+}
+
+/// Returns true if the tasks file for `date` exists and contains at least one task.
+pub fn has_tasks_for(date: NaiveDate) -> bool {
+    let path = match tasks_file(date) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    if !path.exists() { return false; }
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+        .and_then(|v| v.as_array().map(|a| !a.is_empty()))
+        .unwrap_or(false)
+}
+
+/// Returns the most recent business day that has unsent tasks, or today if none found.
+/// On Monday, this naturally returns Friday if Friday had unsent tasks.
+pub fn find_active_date() -> NaiveDate {
+    let today = Local::now().date_naive();
+    let mut check = today;
+
+    for _ in 0..10 {
+        if !matches!(check.weekday(), Weekday::Sat | Weekday::Sun) {
+            if has_tasks_for(check) && !already_sent_for(check) {
+                return check;
+            }
+        }
+        match check.pred_opt() {
+            Some(prev) => check = prev,
+            None => break,
+        }
+    }
+
+    today
 }

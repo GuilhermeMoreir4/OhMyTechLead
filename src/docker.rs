@@ -37,6 +37,57 @@ fn container_exists() -> bool {
         .unwrap_or(false)
 }
 
+fn is_running() -> bool {
+    Command::new("docker")
+        .args(["ps", "--filter", &format!("name=^/{}$", CONTAINER), "--format", "{{.Names}}"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains(CONTAINER))
+        .unwrap_or(false)
+}
+
+/// Ensures the container is accessible without recreating it if already running.
+/// - Running → noop
+/// - Stopped (exists but not running) → `docker start`
+/// - Missing → create fresh (same as ensure_running)
+pub fn ensure_accessible() -> Result<()> {
+    if is_running() {
+        return Ok(());
+    }
+    if container_exists() {
+        let ok = Command::new("docker")
+            .args(["start", CONTAINER])
+            .status()?
+            .success();
+        if !ok {
+            anyhow::bail!("falha ao iniciar container {}", CONTAINER);
+        }
+        return Ok(());
+    }
+    // Container does not exist — create it
+    let sessions = sessions_dir()?;
+    let port_bind = format!("127.0.0.1:{}:3000", PORT);
+    let volume = format!("{}:/app/.sessions", sessions.display());
+    let api_key_env = format!("WAHA_API_KEY={}", LOCAL_API_KEY);
+
+    let ok = Command::new("docker")
+        .args([
+            "run", "-d",
+            "--name", CONTAINER,
+            "-p", &port_bind,
+            "-v", &volume,
+            "-e", &api_key_env,
+            IMAGE,
+        ])
+        .status()?
+        .success();
+
+    if !ok {
+        anyhow::bail!("falha ao criar container {}", CONTAINER);
+    }
+
+    Ok(())
+}
+
 fn stop_and_remove() {
     let _ = Command::new("docker").args(["stop", CONTAINER]).output();
     let _ = Command::new("docker").args(["rm", CONTAINER]).output();

@@ -9,7 +9,10 @@ use std::io;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use crate::app::{AddTaskStep, App, Screen, WppPhase};
+use crate::app::{
+    AddTaskStep, App, Screen, WppPhase,
+    CUSTOM_CAT_ADD_IDX, DISCORD_TOGGLE_IDX, SETTINGS_COUNT, TOGGLE_IDX,
+};
 use crate::ui;
 
 pub fn run_tui() -> Result<()> {
@@ -55,17 +58,19 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()>
 
 fn handle_key(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
     match app.screen.clone() {
-        Screen::Dashboard     => handle_dashboard(app, key),
-        Screen::AddTask       => handle_add_task(app, key),
-        Screen::PreviewReport => handle_preview(app, key)?,
-        Screen::ConfirmSend   => handle_confirm_send(app, key)?,
-        Screen::Settings      => handle_settings(app, key, modifiers)?,
-        Screen::WhatsappSetup => handle_wpp_setup(app, key)?,
+        Screen::Dashboard          => handle_dashboard(app, key),
+        Screen::AddTask            => handle_add_task(app, key),
+        Screen::PreviewReport      => handle_preview(app, key)?,
+        Screen::ConfirmSend        => handle_confirm_send(app, key)?,
+        Screen::Settings           => handle_settings(app, key, modifiers)?,
+        Screen::WhatsappSetup      => handle_wpp_setup(app, key)?,
+        Screen::AddCustomCategory  => handle_add_custom_category(app, key)?,
     }
     Ok(())
 }
 
 fn handle_dashboard(app: &mut App, key: KeyCode) {
+    let cat_count = app.all_categories().len();
     match key {
         KeyCode::Char('q') | KeyCode::Char('Q') => app.should_quit = true,
         KeyCode::Char('n') | KeyCode::Char('N') => {
@@ -90,11 +95,11 @@ fn handle_dashboard(app: &mut App, key: KeyCode) {
             enter_wpp_setup(app);
         }
         KeyCode::Tab | KeyCode::Right => {
-            app.selected_category = (app.selected_category + 1) % 4;
+            app.selected_category = (app.selected_category + 1) % cat_count;
             app.selected_task = 0;
         }
         KeyCode::BackTab | KeyCode::Left => {
-            app.selected_category = (app.selected_category + 3) % 4;
+            app.selected_category = (app.selected_category + cat_count - 1) % cat_count;
             app.selected_task = 0;
         }
         KeyCode::Up => {
@@ -123,6 +128,7 @@ fn enter_wpp_setup(app: &mut App) {
 }
 
 fn handle_add_task(app: &mut App, key: KeyCode) {
+    let cat_count = app.all_categories().len();
     match app.add_step {
         AddTaskStep::SelectCategory => match key {
             KeyCode::Esc => app.screen = Screen::Dashboard,
@@ -130,7 +136,7 @@ fn handle_add_task(app: &mut App, key: KeyCode) {
                 if app.add_category > 0 { app.add_category -= 1; }
             }
             KeyCode::Down => {
-                if app.add_category < 3 { app.add_category += 1; }
+                if app.add_category + 1 < cat_count { app.add_category += 1; }
             }
             KeyCode::Enter => {
                 app.add_step = AddTaskStep::EnterDescription;
@@ -182,7 +188,7 @@ fn handle_confirm_send(app: &mut App, key: KeyCode) -> Result<()> {
 }
 
 fn handle_settings(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Result<()> {
-    use crate::app::{SETTINGS_COUNT, DISCORD_TOGGLE_IDX, TOGGLE_IDX};
+    let max_idx = CUSTOM_CAT_ADD_IDX + app.custom_categories.len();
 
     if app.settings_editing {
         match key {
@@ -198,7 +204,6 @@ fn handle_settings(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Resu
             _ => {}
         }
     } else {
-        let max_idx = SETTINGS_COUNT + 1;
         match key {
             KeyCode::Esc => app.screen = Screen::Dashboard,
             KeyCode::Up => {
@@ -207,13 +212,35 @@ fn handle_settings(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Resu
             KeyCode::Down => {
                 if app.settings_field < max_idx { app.settings_field += 1; }
             }
+            // Discord toggle
             KeyCode::Char(' ') | KeyCode::Enter if app.settings_field == DISCORD_TOGGLE_IDX => {
                 app.discord_enabled = !app.discord_enabled;
             }
+            // WhatsApp toggle
             KeyCode::Char(' ') | KeyCode::Enter if app.settings_field == TOGGLE_IDX => {
                 app.wpp_enabled = !app.wpp_enabled;
             }
-            KeyCode::Enter => {
+            // Open add custom category screen
+            KeyCode::Enter if app.settings_field == CUSTOM_CAT_ADD_IDX => {
+                app.custom_cat_step = 0;
+                app.custom_cat_name.clear();
+                app.custom_cat_icon.clear();
+                app.screen = Screen::AddCustomCategory;
+            }
+            // Delete a custom category
+            KeyCode::Char('d') | KeyCode::Char('D')
+                if app.settings_field > CUSTOM_CAT_ADD_IDX =>
+            {
+                let cat_idx = app.settings_field - CUSTOM_CAT_ADD_IDX - 1;
+                app.delete_custom_category(cat_idx);
+                // Clamp settings_field
+                let new_max = CUSTOM_CAT_ADD_IDX + app.custom_categories.len();
+                if app.settings_field > new_max {
+                    app.settings_field = new_max;
+                }
+            }
+            // Edit a text field
+            KeyCode::Enter if app.settings_field < SETTINGS_COUNT => {
                 app.settings_editing = true;
             }
             KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
@@ -221,6 +248,44 @@ fn handle_settings(app: &mut App, key: KeyCode, modifiers: KeyModifiers) -> Resu
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+fn handle_add_custom_category(app: &mut App, key: KeyCode) -> Result<()> {
+    match key {
+        KeyCode::Esc => {
+            if app.custom_cat_step == 0 {
+                app.screen = Screen::Settings;
+            } else {
+                app.custom_cat_step = 0;
+            }
+        }
+        KeyCode::Enter => {
+            if app.custom_cat_step == 0 {
+                if !app.custom_cat_name.trim().is_empty() {
+                    app.custom_cat_step = 1;
+                }
+            } else {
+                app.add_custom_category();
+                app.screen = Screen::Settings;
+            }
+        }
+        KeyCode::Backspace => {
+            if app.custom_cat_step == 0 {
+                app.custom_cat_name.pop();
+            } else {
+                app.custom_cat_icon.pop();
+            }
+        }
+        KeyCode::Char(c) => {
+            if app.custom_cat_step == 0 {
+                app.custom_cat_name.push(c);
+            } else {
+                app.custom_cat_icon.push(c);
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -268,7 +333,6 @@ fn save_wpp_phone(app: &mut App) -> Result<()> {
     config.whatsapp.enabled = true;
     crate::config::save_config(&config)?;
 
-    // update settings_inputs in-memory too
     app.settings_inputs[crate::app::S_WPP_PHONE] = phone;
     app.wpp_enabled = true;
 

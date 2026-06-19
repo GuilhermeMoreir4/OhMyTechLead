@@ -13,7 +13,6 @@ use crate::storage::Category;
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
 
-    // outer layout: header / body / footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -40,27 +39,70 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_body(f: &mut Frame, app: &App, area: Rect) {
+    let categories = app.all_categories();
+    let n = categories.len();
+    if n == 0 { return; }
+
+    let row_count = (n + 1) / 2;
+    let row_constraints: Vec<Constraint> = (0..row_count)
+        .map(|_| Constraint::Ratio(1, row_count as u32))
+        .collect();
+
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints(row_constraints)
         .split(area);
 
-    let top = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[0]);
+    for (row_idx, row_area) in rows.iter().enumerate() {
+        let left_idx = row_idx * 2;
+        let right_idx = left_idx + 1;
+        let has_right = right_idx < n;
 
-    let bottom = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[1]);
+        let cols = if has_right {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(*row_area)
+        } else {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(100)])
+                .split(*row_area)
+        };
 
-    let cells = [top[0], top[1], bottom[0], bottom[1]];
-    let categories = Category::all();
+        render_category_panel(f, app, &categories[left_idx], cols[0], left_idx == app.selected_category);
 
-    for (i, (cat, cell)) in categories.iter().zip(cells.iter()).enumerate() {
-        render_category_panel(f, app, cat, *cell, i == app.selected_category);
+        if has_right {
+            render_category_panel(f, app, &categories[right_idx], cols[1], right_idx == app.selected_category);
+        }
     }
+}
+
+/// Wraps `text` into lines of at most `max_width` characters (by char count).
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 || text.is_empty() {
+        return vec![text.to_string()];
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.chars().count() + 1 + word.chars().count() <= max_width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(current.clone());
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 fn render_category_panel(f: &mut Frame, app: &App, cat: &Category, area: Rect, is_selected: bool) {
@@ -78,6 +120,9 @@ fn render_category_panel(f: &mut Frame, app: &App, cat: &Category, area: Rect, i
         .borders(Borders::ALL)
         .border_style(border_style);
 
+    // Available width: panel width - 2 (borders) - 2 (prefix "  " or "> ")
+    let available_width = (area.width as usize).saturating_sub(4);
+
     let items: Vec<ListItem> = tasks
         .iter()
         .enumerate()
@@ -89,10 +134,21 @@ fn render_category_panel(f: &mut Frame, app: &App, cat: &Category, area: Rect, i
                 Style::default()
             };
             let prefix = if is_item_selected { "> " } else { "  " };
-            ListItem::new(Line::from(vec![Span::styled(
-                format!("{}{}", prefix, t.description),
-                style,
-            )]))
+
+            let wrapped = wrap_text(&t.description, available_width.saturating_sub(2));
+            let lines: Vec<Line> = wrapped
+                .iter()
+                .enumerate()
+                .map(|(li, text)| {
+                    let display = if li == 0 {
+                        format!("{}{}", prefix, text)
+                    } else {
+                        format!("  {}", text)
+                    };
+                    Line::from(vec![Span::styled(display, style)])
+                })
+                .collect();
+            ListItem::new(lines)
         })
         .collect();
 

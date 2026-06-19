@@ -7,6 +7,13 @@ use std::path::PathBuf;
 fn default_true() -> bool { true }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomCategoryConfig {
+    pub key: String,
+    pub name: String,
+    pub icon: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscordConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -68,6 +75,8 @@ pub struct Config {
     pub whatsapp: WhatsappConfig,
     #[serde(default)]
     pub schedule: ScheduleConfig,
+    #[serde(default)]
+    pub custom_categories: Vec<CustomCategoryConfig>,
 }
 
 pub fn config_path() -> Result<PathBuf> {
